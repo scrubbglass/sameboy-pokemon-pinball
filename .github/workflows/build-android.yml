@@ -23,17 +23,23 @@ jobs:
       - name: Apply Pokemon Pinball full-table patch
         run: python3 tools/patch_sameboy.py SameBoy
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
       - name: Install Android NDK
-        run: sdkmanager "ndk;27.2.12479018"
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "ndk;27.2.12479018"
 
-      - name: Build SameBoy boot ROMs
+      - name: Build RGBDS toolchain
+        shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y rgbds
-          make -C SameBoy bootroms CONF=release
+          sudo apt-get install -y bison flex libpng-dev pkg-config
+          git clone --depth 1 https://github.com/gbdev/rgbds.git rgbds
+          make -C rgbds -j2
+          sudo make -C rgbds install
+
+      - name: Build SameBoy boot ROMs
+        run: make -C SameBoy bootroms CONF=release
 
       - name: Cross-compile Android ARM64 libretro core
         shell: bash
@@ -46,6 +52,11 @@ jobs:
             platform=unix \
             BOOTROMS_DIR="$GITHUB_WORKSPACE/SameBoy/build/bin/BootROMs" \
             CFLAGS="-DANDROID -O2"
+
+      - name: Verify Android ARM64 binary
+        run: |
+          file SameBoy/libretro/sameboy_libretro.so
+          readelf -h SameBoy/libretro/sameboy_libretro.so | grep -E "Class:|Machine:"
 
       - name: Rename core
         run: |
