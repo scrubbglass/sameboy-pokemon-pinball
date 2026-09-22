@@ -63,7 +63,7 @@ static uint32_t retained_frame_1[256 * 224];
 
 replace_once(
     '    info->library_name     = "SameBoy";\n',
-    '    info->library_name     = "SameBoy Pinball Full Table v4 Instant Seam";\n',
+    '    info->library_name     = "SameBoy Pinball Full Table v4.1 Tight Seam";\n',
     'core name',
 )
 
@@ -119,6 +119,19 @@ helper_anchor = '''void retro_reset(void)
     }
 
     geometry_updated = true;
+}
+
+static bool pokemon_pinball_is_main_field_stage(uint8_t stage)
+{
+    return stage == 0x00 || stage == 0x01 || stage == 0x04 || stage == 0x05;
+}
+
+static bool pokemon_pinball_is_vertical_pair(uint8_t a, uint8_t b)
+{
+    return (a == 0x00 && b == 0x01) ||
+           (a == 0x01 && b == 0x00) ||
+           (a == 0x04 && b == 0x05) ||
+           (a == 0x05 && b == 0x04);
 }
 
 void retro_run(void)
@@ -308,6 +321,47 @@ void retro_run(void)
 '''
 
 replace_once(helper_anchor, helper_replacement, 'video helper')
+
+replace_once(
+    '''    else {
+        GB_run_frame(&gameboy[0]);
+    }
+
+    if (emulated_devices == 2) {
+''',
+    '''    else {
+        uint8_t pinball_stage_before = 0xff;
+        if (pokemon_pinball_full_table) {
+            pinball_stage_before =
+                GB_safe_read_memory(&gameboy[0], POKEMON_PINBALL_STAGE_ADDR);
+        }
+
+        GB_run_frame(&gameboy[0]);
+
+        if (pokemon_pinball_full_table) {
+            const uint8_t pinball_stage_after =
+                GB_safe_read_memory(&gameboy[0], POKEMON_PINBALL_STAGE_ADDR);
+
+            /*
+             * The original game spends a short maintenance interval swapping
+             * the two field halves. Consume exactly one additional emulation
+             * frame internally when a Red/Blue top<->bottom handoff occurs.
+             * RetroArch still receives one displayed frame, trimming roughly
+             * 1/60 second from the visible seam pause.
+             */
+            if (pokemon_pinball_is_main_field_stage(pinball_stage_before) &&
+                pokemon_pinball_is_main_field_stage(pinball_stage_after) &&
+                pokemon_pinball_is_vertical_pair(pinball_stage_before,
+                                                  pinball_stage_after)) {
+                GB_run_frame(&gameboy[0]);
+            }
+        }
+    }
+
+    if (emulated_devices == 2) {
+''',
+    'one-frame seam catch-up',
+)
 
 replace_once(
     '''    else {
