@@ -30,6 +30,7 @@ replace_once(
 #define PINBALL_BOARD_HEIGHT (PINBALL_SCREEN_HEIGHT + PINBALL_STAGE_Y_OFFSET)
 #define POKEMON_PINBALL_STAGE_ADDR 0xD4AC
 #define POKEMON_PINBALL_SCX_ADDR 0xD7AB
+#define POKEMON_PINBALL_BALL_Y_ADDR 0xD4B5
 ''',
     'video constants',
 )
@@ -63,7 +64,7 @@ static uint32_t retained_frame_1[256 * 224];
 
 replace_once(
     '    info->library_name     = "SameBoy";\n',
-    '    info->library_name     = "SameBoy Pinball Full Table v4.1 Tight Seam";\n',
+    '    info->library_name     = "SameBoy Pinball Full Table v4.2 Resume Motion";\n',
     'core name',
 )
 
@@ -304,6 +305,15 @@ static void pokemon_pinball_video_refresh(void)
              PINBALL_BOARD_WIDTH * sizeof(uint32_t));
 }
 
+static uint16_t pokemon_pinball_ball_y(void)
+{
+    const uint16_t low =
+        GB_safe_read_memory(&gameboy[0], POKEMON_PINBALL_BALL_Y_ADDR);
+    const uint16_t high =
+        GB_safe_read_memory(&gameboy[0], POKEMON_PINBALL_BALL_Y_ADDR + 1);
+    return low | (high << 8);
+}
+
 static bool pokemon_pinball_is_main_field_stage(uint8_t stage)
 {
     return stage == 0x00 || stage == 0x01 || stage == 0x04 || stage == 0x05;
@@ -343,17 +353,24 @@ replace_once(
                 GB_safe_read_memory(&gameboy[0], POKEMON_PINBALL_STAGE_ADDR);
 
             /*
-             * The original game spends a short maintenance interval swapping
-             * the two field halves. Consume exactly one additional emulation
-             * frame internally when a Red/Blue top<->bottom handoff occurs.
-             * RetroArch still receives one displayed frame, trimming roughly
-             * 1/60 second from the visible seam pause.
+             * The original game can spend multiple display frames with the
+             * ball position frozen while it finishes the field swap. Instead
+             * of skipping an arbitrary number of frames, consume only those
+             * dead frames: stop on the first frame where the 8.8 fixed-point
+             * ball Y position changes again. Cap at 4 hidden frames so a bug
+             * can never fast-forward normal gameplay indefinitely.
              */
             if (pokemon_pinball_is_main_field_stage(pinball_stage_before) &&
                 pokemon_pinball_is_main_field_stage(pinball_stage_after) &&
                 pokemon_pinball_is_vertical_pair(pinball_stage_before,
                                                   pinball_stage_after)) {
-                GB_run_frame(&gameboy[0]);
+                const uint16_t frozen_ball_y = pokemon_pinball_ball_y();
+                for (unsigned catchup = 0; catchup < 4; catchup++) {
+                    GB_run_frame(&gameboy[0]);
+                    if (pokemon_pinball_ball_y() != frozen_ball_y) {
+                        break;
+                    }
+                }
             }
         }
     }
