@@ -31,6 +31,7 @@ replace_once(
 #define POKEMON_PINBALL_STAGE_ADDR 0xD4AC
 #define POKEMON_PINBALL_SCX_ADDR 0xD7AB
 #define POKEMON_PINBALL_BALL_Y_ADDR 0xD4B5
+#define PINBALL_TRANSITION_CATCHUP_LIMIT 60
 ''',
     'video constants',
 )
@@ -64,7 +65,7 @@ static uint32_t retained_frame_1[256 * 224];
 
 replace_once(
     '    info->library_name     = "SameBoy";\n',
-    '    info->library_name     = "SameBoy Pinball Full Table v4.2 Resume Motion";\n',
+    '    info->library_name     = "SameBoy Pinball Full Table v4.3 Deep Resume 60";\n',
     'core name',
 )
 
@@ -357,15 +358,19 @@ replace_once(
              * ball position frozen while it finishes the field swap. Instead
              * of skipping an arbitrary number of frames, consume only those
              * dead frames: stop on the first frame where the 8.8 fixed-point
-             * ball Y position changes again. Cap at 4 hidden frames so a bug
-             * can never fast-forward normal gameplay indefinitely.
+             * ball Y position changes again. The high limit is only a safety
+             * ceiling for unusually long LCD-off stage loads; it is not a
+             * fixed skip count. Normal gameplay resumes on the first frame
+             * where the real 8.8 ball Y value changes.
              */
             if (pokemon_pinball_is_main_field_stage(pinball_stage_before) &&
                 pokemon_pinball_is_main_field_stage(pinball_stage_after) &&
                 pokemon_pinball_is_vertical_pair(pinball_stage_before,
                                                   pinball_stage_after)) {
                 const uint16_t frozen_ball_y = pokemon_pinball_ball_y();
-                for (unsigned catchup = 0; catchup < 4; catchup++) {
+                for (unsigned catchup = 0;
+                     catchup < PINBALL_TRANSITION_CATCHUP_LIMIT;
+                     catchup++) {
                     GB_run_frame(&gameboy[0]);
                     if (pokemon_pinball_ball_y() != frozen_ball_y) {
                         break;
@@ -377,7 +382,7 @@ replace_once(
 
     if (emulated_devices == 2) {
 ''',
-    'one-frame seam catch-up',
+    'condition-based seam catch-up',
 )
 
 replace_once(
