@@ -57,13 +57,13 @@ jobs:
 
       - name: Verify Android ARM64 binary
         run: |
-          file SameBoy/libretro/sameboy_libretro.so
-          readelf -h SameBoy/libretro/sameboy_libretro.so | grep -E "Class:|Machine:"
+          file SameBoy/sameboy_libretro.so
+          readelf -h SameBoy/sameboy_libretro.so | grep -E "Class:|Machine:"
 
       - name: Rename core
         run: |
           mkdir -p out
-          cp SameBoy/libretro/sameboy_libretro.so out/sameboy_pokemon_pinball_libretro_android_arm64.so
+          cp SameBoy/sameboy_libretro.so out/sameboy_pokemon_pinball_libretro_android_arm64.so
 
       - name: Upload Android core
         uses: actions/upload-artifact@v4
