@@ -121,19 +121,6 @@ helper_anchor = '''void retro_reset(void)
     geometry_updated = true;
 }
 
-static bool pokemon_pinball_is_main_field_stage(uint8_t stage)
-{
-    return stage == 0x00 || stage == 0x01 || stage == 0x04 || stage == 0x05;
-}
-
-static bool pokemon_pinball_is_vertical_pair(uint8_t a, uint8_t b)
-{
-    return (a == 0x00 && b == 0x01) ||
-           (a == 0x01 && b == 0x00) ||
-           (a == 0x04 && b == 0x05) ||
-           (a == 0x05 && b == 0x04);
-}
-
 void retro_run(void)
 '''
 
@@ -315,6 +302,19 @@ static void pokemon_pinball_video_refresh(void)
              PINBALL_BOARD_WIDTH,
              PINBALL_BOARD_HEIGHT,
              PINBALL_BOARD_WIDTH * sizeof(uint32_t));
+}
+
+static bool pokemon_pinball_is_main_field_stage(uint8_t stage)
+{
+    return stage == 0x00 || stage == 0x01 || stage == 0x04 || stage == 0x05;
+}
+
+static bool pokemon_pinball_is_vertical_pair(uint8_t a, uint8_t b)
+{
+    return (a == 0x00 && b == 0x01) ||
+           (a == 0x01 && b == 0x00) ||
+           (a == 0x04 && b == 0x05) ||
+           (a == 0x05 && b == 0x04);
 }
 
 void retro_run(void)
