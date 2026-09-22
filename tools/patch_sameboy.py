@@ -49,6 +49,7 @@ static uint32_t *frame_buf_copy = NULL;
 static bool pokemon_pinball_full_table = false;
 static uint32_t pokemon_pinball_frame[PINBALL_BOARD_WIDTH * PINBALL_BOARD_HEIGHT];
 static int pokemon_pinball_table_id = -1;
+static int pokemon_pinball_last_stage = -1;
 
 static uint32_t retained_frame_1[256 * 224];
 ''',
@@ -139,6 +140,7 @@ helper_replacement = '''void retro_reset(void)
     if (pokemon_pinball_full_table) {
         memset(pokemon_pinball_frame, 0, sizeof(pokemon_pinball_frame));
         pokemon_pinball_table_id = -1;
+        pokemon_pinball_last_stage = -1;
     }
 
     geometry_updated = true;
@@ -200,7 +202,28 @@ static void pokemon_pinball_video_refresh(void)
     if (table_id != pokemon_pinball_table_id) {
         memset(pokemon_pinball_frame, 0, sizeof(pokemon_pinball_frame));
         pokemon_pinball_table_id = table_id;
+        pokemon_pinball_last_stage = -1;
     }
+
+    /*
+     * Pokemon Pinball intentionally outputs one blank/white frame while
+     * FieldVerticalTransition swaps stage VRAM. Since our full-table buffer
+     * already contains the previous field image, hold that composite for the
+     * first frame after a top<->bottom stage change. The emulated game still
+     * performs its normal transition internally; we only suppress the flash
+     * in the video presented to RetroArch.
+     */
+    if (pokemon_pinball_last_stage >= 0 &&
+        stage != pokemon_pinball_last_stage) {
+        pokemon_pinball_last_stage = stage;
+        video_cb(pokemon_pinball_frame,
+                 PINBALL_BOARD_WIDTH,
+                 PINBALL_BOARD_HEIGHT,
+                 PINBALL_BOARD_WIDTH * sizeof(uint32_t));
+        return;
+    }
+
+    pokemon_pinball_last_stage = stage;
 
     for (unsigned y = 0; y < PINBALL_SCREEN_HEIGHT; y++) {
         memcpy(pokemon_pinball_frame + (y + y_offset) * PINBALL_BOARD_WIDTH,
@@ -251,6 +274,7 @@ replace_once(
 
     pokemon_pinball_full_table = false;
     pokemon_pinball_table_id = -1;
+    pokemon_pinball_last_stage = -1;
     memset(pokemon_pinball_frame, 0, sizeof(pokemon_pinball_frame));
 
     /*
