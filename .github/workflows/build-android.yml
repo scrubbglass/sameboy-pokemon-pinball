@@ -63,10 +63,10 @@ jobs:
       - name: Rename core
         run: |
           mkdir -p out
-          cp SameBoy/sameboy_libretro.so out/Pokemon_Pinball_FullTable_v3_WideTable_libretro_android.so
+          cp SameBoy/sameboy_libretro.so out/Pokemon_Pinball_FullTable_v4_InstantSeam_libretro_android.so
 
       - name: Upload Android core
         uses: actions/upload-artifact@v4
         with:
           name: sameboy-pokemon-pinball-android-arm64
-          path: out/Pokemon_Pinball_FullTable_v3_WideTable_libretro_android.so
+          path: out/Pokemon_Pinball_FullTable_v4_InstantSeam_libretro_android.so
