@@ -1,0 +1,59 @@
+name: Build Android ARM64 prototype
+
+on:
+  push:
+    branches:
+      - prototype-v1
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+
+      - name: Checkout pinned SameBoy source
+        run: |
+          git clone https://github.com/LIJI32/SameBoy.git SameBoy
+          cd SameBoy
+          git checkout 213a12ce93d66b105a113debd9396306066a7cfc
+
+      - name: Apply Pokemon Pinball full-table patch
+        run: python3 tools/patch_sameboy.py SameBoy
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK
+        run: sdkmanager "ndk;27.2.12479018"
+
+      - name: Build SameBoy boot ROMs
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rgbds
+          make -C SameBoy bootroms CONF=release
+
+      - name: Cross-compile Android ARM64 libretro core
+        shell: bash
+        run: |
+          NDK="$ANDROID_SDK_ROOT/ndk/27.2.12479018"
+          TOOLCHAIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          export CC="$TOOLCHAIN/aarch64-linux-android21-clang"
+          export AR="$TOOLCHAIN/llvm-ar"
+          make -C SameBoy/libretro \
+            platform=unix \
+            BOOTROMS_DIR="$GITHUB_WORKSPACE/SameBoy/build/bin/BootROMs" \
+            CFLAGS="-DANDROID -O2"
+
+      - name: Rename core
+        run: |
+          mkdir -p out
+          cp SameBoy/libretro/sameboy_libretro.so out/sameboy_pokemon_pinball_libretro_android_arm64.so
+
+      - name: Upload Android core
+        uses: actions/upload-artifact@v4
+        with:
+          name: sameboy-pokemon-pinball-android-arm64
+          path: out/sameboy_pokemon_pinball_libretro_android_arm64.so
