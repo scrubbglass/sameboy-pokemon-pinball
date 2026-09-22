@@ -57,7 +57,7 @@ static uint32_t retained_frame_1[256 * 224];
 
 replace_once(
     '    info->library_name     = "SameBoy";\n',
-    '    info->library_name     = pokemon_pinball_full_table ? "SameBoy Pinball Full Table" : "SameBoy";\n',
+    '    info->library_name     = "SameBoy Pinball Full Table";\n',
     'core name',
 )
 
