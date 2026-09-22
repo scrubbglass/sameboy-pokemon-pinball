@@ -58,7 +58,7 @@ static uint32_t retained_frame_1[256 * 224];
 
 replace_once(
     '    info->library_name     = "SameBoy";\n',
-    '    info->library_name     = "SameBoy Pinball Full Table";\n',
+    '    info->library_name     = "SameBoy Pinball Full Table v2.1 No Flash";\n',
     'core name',
 )
 
@@ -224,6 +224,28 @@ static void pokemon_pinball_video_refresh(void)
     }
 
     pokemon_pinball_last_stage = stage;
+
+    /*
+     * The original game can blank the display before wCurrentStage changes.
+     * Catch those transition frames directly: if >98% of the 160x144 source
+     * frame is the exact same pixel, treat it as a blank maintenance frame and
+     * keep showing our already-built composite instead.
+     */
+    const uint32_t blank_color = frame_buf[0];
+    unsigned uniform_pixels = 0;
+    const unsigned total_pixels = PINBALL_BOARD_WIDTH * PINBALL_SCREEN_HEIGHT;
+    for (unsigned i = 0; i < total_pixels; i++) {
+        if (frame_buf[i] == blank_color) {
+            uniform_pixels++;
+        }
+    }
+    if (uniform_pixels * 100 >= total_pixels * 98) {
+        video_cb(pokemon_pinball_frame,
+                 PINBALL_BOARD_WIDTH,
+                 PINBALL_BOARD_HEIGHT,
+                 PINBALL_BOARD_WIDTH * sizeof(uint32_t));
+        return;
+    }
 
     for (unsigned y = 0; y < PINBALL_SCREEN_HEIGHT; y++) {
         memcpy(pokemon_pinball_frame + (y + y_offset) * PINBALL_BOARD_WIDTH,
