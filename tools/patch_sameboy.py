@@ -53,9 +53,8 @@ static bool pokemon_pinball_full_table = false;
 static uint32_t pokemon_pinball_frame[PINBALL_BOARD_WIDTH * PINBALL_BOARD_HEIGHT];
 static int pokemon_pinball_table_id = -1;
 static int pokemon_pinball_last_stage = -1;
+static int pokemon_pinball_transition_from_stage = -1;
 static bool pokemon_pinball_transition_pending = false;
-static bool pokemon_pinball_have_source_frame = false;
-static uint32_t pokemon_pinball_last_source_frame[PINBALL_SCREEN_WIDTH * PINBALL_SCREEN_HEIGHT];
 
 static uint32_t retained_frame_1[256 * 224];
 ''',
@@ -64,7 +63,7 @@ static uint32_t retained_frame_1[256 * 224];
 
 replace_once(
     '    info->library_name     = "SameBoy";\n',
-    '    info->library_name     = "SameBoy Pinball Full Table v3 Wide Table";\n',
+    '    info->library_name     = "SameBoy Pinball Full Table v4 Instant Seam";\n',
     'core name',
 )
 
@@ -147,8 +146,8 @@ helper_replacement = '''void retro_reset(void)
         memset(pokemon_pinball_frame, 0, sizeof(pokemon_pinball_frame));
         pokemon_pinball_table_id = -1;
         pokemon_pinball_last_stage = -1;
+        pokemon_pinball_transition_from_stage = -1;
         pokemon_pinball_transition_pending = false;
-        pokemon_pinball_have_source_frame = false;
     }
 
     geometry_updated = true;
@@ -217,8 +216,8 @@ static void pokemon_pinball_video_refresh(void)
         memset(pokemon_pinball_frame, 0, sizeof(pokemon_pinball_frame));
         pokemon_pinball_table_id = table_id;
         pokemon_pinball_last_stage = -1;
+        pokemon_pinball_transition_from_stage = -1;
         pokemon_pinball_transition_pending = false;
-        pokemon_pinball_have_source_frame = false;
     }
 
     const unsigned total_pixels = PINBALL_SCREEN_WIDTH * PINBALL_SCREEN_HEIGHT;
@@ -243,14 +242,14 @@ static void pokemon_pinball_video_refresh(void)
     }
 
     /*
-     * wCurrentStage changes slightly before the framebuffer necessarily
-     * contains the newly-loaded half. Mark the handoff as pending, then hold
-     * the existing full-table image only while the source still looks like
-     * the last accepted frame from the old half. The first genuinely new,
-     * non-blank frame is accepted immediately.
+     * wCurrentStage may advance before the completed framebuffer does.
+     * Remember the half we came from. While the live source still strongly
+     * matches that cached old half, keep the already-stitched board visible.
+     * Accept the first genuinely new, non-blank field frame immediately.
      */
     if (pokemon_pinball_last_stage >= 0 &&
         stage != pokemon_pinball_last_stage) {
+        pokemon_pinball_transition_from_stage = pokemon_pinball_last_stage;
         pokemon_pinball_transition_pending = true;
         pokemon_pinball_last_stage = stage;
     }
@@ -259,15 +258,29 @@ static void pokemon_pinball_video_refresh(void)
     }
 
     if (pokemon_pinball_transition_pending &&
-        pokemon_pinball_have_source_frame) {
-        unsigned same_pixels = 0;
-        for (unsigned i = 0; i < total_pixels; i++) {
-            if (frame_buf[i] == pokemon_pinball_last_source_frame[i]) {
-                same_pixels++;
+        pokemon_pinball_transition_from_stage >= 0) {
+        const unsigned old_y_offset =
+            (pokemon_pinball_transition_from_stage == 0x01 ||
+             pokemon_pinball_transition_from_stage == 0x05)
+                ? PINBALL_STAGE_Y_OFFSET : 0;
+
+        unsigned old_half_matches = 0;
+        for (unsigned y = 0; y < PINBALL_SCREEN_HEIGHT; y++) {
+            const uint32_t *old_row =
+                pokemon_pinball_frame +
+                (y + old_y_offset) * PINBALL_BOARD_WIDTH +
+                x_offset;
+            const uint32_t *src_row =
+                frame_buf + y * PINBALL_SCREEN_WIDTH;
+
+            for (unsigned x = 0; x < PINBALL_SCREEN_WIDTH; x++) {
+                if (src_row[x] == old_row[x]) {
+                    old_half_matches++;
+                }
             }
         }
 
-        if (same_pixels * 1000 >= total_pixels * 995) {
+        if (old_half_matches * 100 >= total_pixels * 90) {
             video_cb(pokemon_pinball_frame,
                      PINBALL_BOARD_WIDTH,
                      PINBALL_BOARD_HEIGHT,
@@ -276,6 +289,7 @@ static void pokemon_pinball_video_refresh(void)
         }
 
         pokemon_pinball_transition_pending = false;
+        pokemon_pinball_transition_from_stage = -1;
     }
 
     for (unsigned y = 0; y < PINBALL_SCREEN_HEIGHT; y++) {
@@ -283,11 +297,6 @@ static void pokemon_pinball_video_refresh(void)
                frame_buf + y * PINBALL_SCREEN_WIDTH,
                PINBALL_SCREEN_WIDTH * sizeof(uint32_t));
     }
-
-    memcpy(pokemon_pinball_last_source_frame,
-           frame_buf,
-           total_pixels * sizeof(uint32_t));
-    pokemon_pinball_have_source_frame = true;
 
     video_cb(pokemon_pinball_frame,
              PINBALL_BOARD_WIDTH,
@@ -333,8 +342,8 @@ replace_once(
     pokemon_pinball_full_table = false;
     pokemon_pinball_table_id = -1;
     pokemon_pinball_last_stage = -1;
+    pokemon_pinball_transition_from_stage = -1;
     pokemon_pinball_transition_pending = false;
-    pokemon_pinball_have_source_frame = false;
     memset(pokemon_pinball_frame, 0, sizeof(pokemon_pinball_frame));
 
     /*
@@ -351,6 +360,73 @@ replace_once(
     check_variables();
 ''',
     'ROM detection',
+)
+
+
+replace_once(
+    '''    for (int i = 0; i < emulated_devices; i++) {
+        init_for_current_model(i);
+        GB_load_rom_from_buffer(&gameboy[i], content_data, content_size);
+    }
+
+    bool achievements = true;
+''',
+    '''    for (int i = 0; i < emulated_devices; i++) {
+        init_for_current_model(i);
+        GB_load_rom_from_buffer(&gameboy[i], content_data, content_size);
+    }
+
+    /*
+     * Pokemon Pinball deliberately blanks the palettes and executes
+     * rst $10 (AdvanceFrame) during FieldVerticalTransition. Our full-table
+     * renderer no longer needs that maintenance frame. Patch only the unique
+     * in-memory instruction sequence:
+     *   E0 47 E0 48 E0 49 D7
+     * to:
+     *   E0 47 E0 48 E0 49 00
+     * The user's .gbc file on disk is never modified.
+     */
+    if (pokemon_pinball_full_table && emulated_devices == 1) {
+        size_t rom_size = 0;
+        uint8_t *rom = GB_get_direct_access(&gameboy[0],
+                                            GB_DIRECT_ACCESS_ROM,
+                                            &rom_size,
+                                            NULL);
+        static const uint8_t transition_wait_pattern[] = {
+            0xE0, 0x47, 0xE0, 0x48, 0xE0, 0x49, 0xD7
+        };
+
+        size_t match_offset = 0;
+        unsigned match_count = 0;
+        if (rom && rom_size >= sizeof(transition_wait_pattern)) {
+            for (size_t i = 0;
+                 i + sizeof(transition_wait_pattern) <= rom_size;
+                 i++) {
+                if (memcmp(rom + i,
+                           transition_wait_pattern,
+                           sizeof(transition_wait_pattern)) == 0) {
+                    match_offset = i;
+                    match_count++;
+                }
+            }
+        }
+
+        if (match_count == 1) {
+            rom[match_offset + sizeof(transition_wait_pattern) - 1] = 0x00;
+            log_cb(RETRO_LOG_INFO,
+                   "Pokemon Pinball: removed transition AdvanceFrame at ROM offset 0x%zx\\n",
+                   match_offset);
+        }
+        else {
+            log_cb(RETRO_LOG_WARN,
+                   "Pokemon Pinball: transition wait patch skipped (pattern matches: %u)\\n",
+                   match_count);
+        }
+    }
+
+    bool achievements = true;
+''',
+    'runtime transition wait patch',
 )
 
 path.write_text(src)
