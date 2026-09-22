@@ -22,11 +22,14 @@ replace_once(
     '#define MAX_VIDEO_PIXELS (MAX_VIDEO_WIDTH * MAX_VIDEO_HEIGHT)\n',
     '''#define MAX_VIDEO_PIXELS (MAX_VIDEO_WIDTH * MAX_VIDEO_HEIGHT)
 
-#define PINBALL_BOARD_WIDTH 160
+#define PINBALL_SCREEN_WIDTH 160
 #define PINBALL_SCREEN_HEIGHT 144
+#define PINBALL_MAX_HORIZONTAL_SCROLL 34
+#define PINBALL_BOARD_WIDTH (PINBALL_SCREEN_WIDTH + PINBALL_MAX_HORIZONTAL_SCROLL)
 #define PINBALL_STAGE_Y_OFFSET 136
 #define PINBALL_BOARD_HEIGHT (PINBALL_SCREEN_HEIGHT + PINBALL_STAGE_Y_OFFSET)
 #define POKEMON_PINBALL_STAGE_ADDR 0xD4AC
+#define POKEMON_PINBALL_SCX_ADDR 0xD7AB
 ''',
     'video constants',
 )
@@ -52,7 +55,7 @@ static int pokemon_pinball_table_id = -1;
 static int pokemon_pinball_last_stage = -1;
 static bool pokemon_pinball_transition_pending = false;
 static bool pokemon_pinball_have_source_frame = false;
-static uint32_t pokemon_pinball_last_source_frame[PINBALL_BOARD_WIDTH * PINBALL_SCREEN_HEIGHT];
+static uint32_t pokemon_pinball_last_source_frame[PINBALL_SCREEN_WIDTH * PINBALL_SCREEN_HEIGHT];
 
 static uint32_t retained_frame_1[256 * 224];
 ''',
@@ -61,7 +64,7 @@ static uint32_t retained_frame_1[256 * 224];
 
 replace_once(
     '    info->library_name     = "SameBoy";\n',
-    '    info->library_name     = "SameBoy Pinball Full Table v2.2 Stage Sync";\n',
+    '    info->library_name     = "SameBoy Pinball Full Table v3 Wide Table";\n',
     'core name',
 )
 
@@ -157,13 +160,18 @@ static void pokemon_pinball_video_refresh(void)
     const unsigned height = GB_get_screen_height(&gameboy[0]);
 
     if (!pokemon_pinball_full_table ||
-        width != PINBALL_BOARD_WIDTH ||
+        width != PINBALL_SCREEN_WIDTH ||
         height != PINBALL_SCREEN_HEIGHT) {
         video_cb(frame_buf, width, height, width * sizeof(uint32_t));
         return;
     }
 
     const uint8_t stage = GB_safe_read_memory(&gameboy[0], POKEMON_PINBALL_STAGE_ADDR);
+    uint8_t scx = GB_safe_read_memory(&gameboy[0], POKEMON_PINBALL_SCX_ADDR);
+    if (scx > PINBALL_MAX_HORIZONTAL_SCROLL) {
+        scx = PINBALL_MAX_HORIZONTAL_SCROLL;
+    }
+    const unsigned x_offset = scx;
     int table_id = -1;
     unsigned y_offset = 0;
 
@@ -191,10 +199,11 @@ static void pokemon_pinball_video_refresh(void)
              */
             memset(pokemon_pinball_frame, 0, sizeof(pokemon_pinball_frame));
             y_offset = (PINBALL_BOARD_HEIGHT - PINBALL_SCREEN_HEIGHT) / 2;
+            const unsigned bonus_x_offset = (PINBALL_BOARD_WIDTH - PINBALL_SCREEN_WIDTH) / 2;
             for (unsigned y = 0; y < PINBALL_SCREEN_HEIGHT; y++) {
-                memcpy(pokemon_pinball_frame + (y + y_offset) * PINBALL_BOARD_WIDTH,
-                       frame_buf + y * PINBALL_BOARD_WIDTH,
-                       PINBALL_BOARD_WIDTH * sizeof(uint32_t));
+                memcpy(pokemon_pinball_frame + (y + y_offset) * PINBALL_BOARD_WIDTH + bonus_x_offset,
+                       frame_buf + y * PINBALL_SCREEN_WIDTH,
+                       PINBALL_SCREEN_WIDTH * sizeof(uint32_t));
             }
             pokemon_pinball_table_id = -1;
             video_cb(pokemon_pinball_frame,
@@ -212,7 +221,7 @@ static void pokemon_pinball_video_refresh(void)
         pokemon_pinball_have_source_frame = false;
     }
 
-    const unsigned total_pixels = PINBALL_BOARD_WIDTH * PINBALL_SCREEN_HEIGHT;
+    const unsigned total_pixels = PINBALL_SCREEN_WIDTH * PINBALL_SCREEN_HEIGHT;
 
     /*
      * The original game blanks the LCD while swapping field VRAM. Suppress
@@ -258,7 +267,7 @@ static void pokemon_pinball_video_refresh(void)
             }
         }
 
-        if (same_pixels * 100 >= total_pixels * 90) {
+        if (same_pixels * 1000 >= total_pixels * 995) {
             video_cb(pokemon_pinball_frame,
                      PINBALL_BOARD_WIDTH,
                      PINBALL_BOARD_HEIGHT,
@@ -270,9 +279,9 @@ static void pokemon_pinball_video_refresh(void)
     }
 
     for (unsigned y = 0; y < PINBALL_SCREEN_HEIGHT; y++) {
-        memcpy(pokemon_pinball_frame + (y + y_offset) * PINBALL_BOARD_WIDTH,
-               frame_buf + y * PINBALL_BOARD_WIDTH,
-               PINBALL_BOARD_WIDTH * sizeof(uint32_t));
+        memcpy(pokemon_pinball_frame + (y + y_offset) * PINBALL_BOARD_WIDTH + x_offset,
+               frame_buf + y * PINBALL_SCREEN_WIDTH,
+               PINBALL_SCREEN_WIDTH * sizeof(uint32_t));
     }
 
     memcpy(pokemon_pinball_last_source_frame,
