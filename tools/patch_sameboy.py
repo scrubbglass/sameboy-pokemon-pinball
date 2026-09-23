@@ -32,6 +32,12 @@ replace_once(
 #define POKEMON_PINBALL_SCX_ADDR 0xD7AB
 #define POKEMON_PINBALL_BALL_Y_ADDR 0xD4B5
 #define PINBALL_TRANSITION_CATCHUP_LIMIT 60
+#define POKEMON_PINBALL_LOCAL_COPY_LOOP_ADDR 0x065D
+#define POKEMON_PINBALL_LOCAL_COPY_EXIT_ADDR 0x0665
+#define POKEMON_PINBALL_FAR_COPY_LOOP_ADDR 0x067E
+#define POKEMON_PINBALL_FAR_COPY_EXIT_ADDR 0x0686
+#define POKEMON_PINBALL_VIDEO_COPY_LOOP_ADDR 0x06EB
+#define POKEMON_PINBALL_VIDEO_COPY_EXIT_ADDR 0x06F3
 ''',
     'video constants',
 )
@@ -65,7 +71,7 @@ static uint32_t retained_frame_1[256 * 224];
 
 replace_once(
     '    info->library_name     = "SameBoy";\n',
-    '    info->library_name     = "SameBoy Pinball Full Table v4.3 Deep Resume 60";\n',
+    '    info->library_name     = "SameBoy Pinball Full Table v4.4 Fast Stage Copy";\n',
     'core name',
 )
 
@@ -314,6 +320,71 @@ static uint16_t pokemon_pinball_ball_y(void)
         GB_safe_read_memory(&gameboy[0], POKEMON_PINBALL_BALL_Y_ADDR + 1);
     return low | (high << 8);
 }
+/*
+ * Pokemon Pinball's vertical transition disables the LCD and then copies
+ * several kilobytes of tiles, tilemaps, palettes, and collision data through
+ * three generic byte-at-a-time SM83 loops. With the LCD disabled there is no
+ * display frame boundary, so one GB_run_frame() call waits for all of those
+ * emulated CPU iterations to finish.
+ *
+ * Preserve the exact reads and writes, including mapper and VRAM behavior,
+ * but perform the loop body on the host when one of those known loops is
+ * reached during an LCD-off seam transition. The fetched LD A,[HL+] executes
+ * once after this callback, rereading the final source byte so the resulting
+ * A, F, HL, DE, and BC registers match the original loop without changing
+ * SameBoy's CPU core.
+ */
+static void pokemon_pinball_fast_copy_callback(GB_gameboy_t *gb,
+                                                uint16_t address,
+                                                uint8_t opcode)
+{
+    if (!pokemon_pinball_full_table ||
+        gb != &gameboy[0] ||
+        opcode != 0x2a || /* LD A,[HL+] */
+        (gb->io_registers[GB_IO_LCDC] & GB_LCDC_ENABLE) ||
+        gb->bc == 0) {
+        return;
+    }
+
+    uint16_t exit_address;
+    switch (address) {
+        case POKEMON_PINBALL_LOCAL_COPY_LOOP_ADDR:
+            exit_address = POKEMON_PINBALL_LOCAL_COPY_EXIT_ADDR;
+            break;
+        case POKEMON_PINBALL_FAR_COPY_LOOP_ADDR:
+            exit_address = POKEMON_PINBALL_FAR_COPY_EXIT_ADDR;
+            break;
+        case POKEMON_PINBALL_VIDEO_COPY_LOOP_ADDR:
+            exit_address = POKEMON_PINBALL_VIDEO_COPY_EXIT_ADDR;
+            break;
+        default:
+            return;
+    }
+
+    uint16_t source = gb->hl;
+    uint16_t destination = gb->de;
+    const uint16_t count = gb->bc;
+
+    for (uint32_t i = 0; i < count; i++) {
+        const uint8_t value = GB_read_memory(gb, source++);
+        GB_write_memory(gb, destination++, value);
+    }
+
+    gb->f = GB_ZERO_FLAG;
+    gb->hl = source - 1;
+    gb->de = destination;
+    gb->bc = 0;
+    gb->pc = exit_address;
+}
+
+static bool pokemon_pinball_near_vertical_seam(uint8_t stage)
+{
+    const uint8_t ball_y_high =
+        GB_safe_read_memory(&gameboy[0], POKEMON_PINBALL_BALL_Y_ADDR + 1);
+
+    return ((stage == 0x00 || stage == 0x04) && ball_y_high >= 0x98) ||
+           ((stage == 0x01 || stage == 0x05) && ball_y_high <= 0x20);
+}
 
 static bool pokemon_pinball_is_main_field_stage(uint8_t stage)
 {
@@ -342,6 +413,16 @@ replace_once(
 ''',
     '''    else {
         uint8_t pinball_stage_before = 0xff;
+
+        GB_set_execution_callback(&gameboy[0], NULL);
+        if (pokemon_pinball_full_table &&
+            pokemon_pinball_near_vertical_seam(
+                GB_safe_read_memory(&gameboy[0],
+                                    POKEMON_PINBALL_STAGE_ADDR))) {
+            GB_set_execution_callback(&gameboy[0],
+                                      pokemon_pinball_fast_copy_callback);
+
+        }
         if (pokemon_pinball_full_table) {
             pinball_stage_before =
                 GB_safe_read_memory(&gameboy[0], POKEMON_PINBALL_STAGE_ADDR);
